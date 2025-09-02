@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Complete System Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
+        .test-section { margin: 20px 0; padding: 20px; border: 1px solid #ddd; border-radius: 8px; }
+        .test-section h3 { margin-top: 0; }
+        button { padding: 10px 20px; margin: 5px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #0056b3; }
+        .result { margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 4px; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        input { padding: 8px; margin: 5px; border: 1px solid #ddd; border-radius: 4px; }
+        .form-group { margin: 10px 0; }
+        label { display: inline-block; width: 120px; }
+    </style>
+</head>
+<body>
+    <h1>Complete System Test</h1>
+    
+    <!-- Signup Test -->
+    <div class="test-section">
+        <h3>1. Test User Signup</h3>
+        <div class="form-group">
+            <label>Username:</label>
+            <input type="text" id="signupUsername" placeholder="Enter username">
+        </div>
+        <div class="form-group">
+            <label>Email:</label>
+            <input type="email" id="signupEmail" placeholder="Enter email">
+        </div>
+        <div class="form-group">
+            <label>Password:</label>
+            <input type="password" id="signupPassword" placeholder="Enter password">
+        </div>
+        <button onclick="testSignup()">Test Signup</button>
+        <div id="signupResult" class="result"></div>
+    </div>
+
+    <!-- Login Test -->
+    <div class="test-section">
+        <h3>2. Test User Login</h3>
+        <div class="form-group">
+            <label>Username:</label>
+            <input type="text" id="loginUsername" placeholder="Enter username">
+        </div>
+        <div class="form-group">
+            <label>Password:</label>
+            <input type="password" id="loginPassword" placeholder="Enter password">
+        </div>
+        <button onclick="testLogin()">Test Login</button>
+        <div id="loginResult" class="result"></div>
+    </div>
+
+    <!-- Form Submission Test -->
+    <div class="test-section">
+        <h3>3. Test Form Submission</h3>
+        <div class="form-group">
+            <label>Name:</label>
+            <input type="text" id="formName" placeholder="Enter name">
+        </div>
+        <div class="form-group">
+            <label>Age:</label>
+            <input type="number" id="formAge" placeholder="Enter age">
+        </div>
+        <div class="form-group">
+            <label>Phone:</label>
+            <input type="tel" id="formPhone" placeholder="Enter phone">
+        </div>
+        <div class="form-group">
+            <label>Email:</label>
+            <input type="email" id="formEmail" placeholder="Enter email">
+        </div>
+        <button onclick="testFormSubmission()">Submit Form</button>
+        <div id="formResult" class="result"></div>
+    </div>
+
+    <!-- Get Form Data Test -->
+    <div class="test-section">
+        <h3>4. Test Get Form Data</h3>
+        <button onclick="testGetFormData()">Get All Form Data</button>
+        <div id="getDataResult" class="result"></div>
+    </div>
+
+    <script>
+        let currentToken = null;
+        let currentUser = null;
+
+        async function testSignup() {
+            const username = document.getElementById('signupUsername').value;
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+
+            if (!username || !email || !password) {
+                showResult('signupResult', 'Please fill all fields', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:5000/api/signup', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, email, password })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentToken = data.token;
+                    currentUser = data.user;
+                    showResult('signupResult', `Success: ${data.message}`, 'success');
+                    document.getElementById('loginUsername').value = username;
+                    document.getElementById('loginPassword').value = password;
+                } else {
+                    showResult('signupResult', `Error: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                showResult('signupResult', `Network Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testLogin() {
+            const username = document.getElementById('loginUsername').value;
+            const password = document.getElementById('loginPassword').value;
+
+            if (!username || !password) {
+                showResult('loginResult', 'Please fill all fields', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:5000/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    currentToken = data.token;
+                    currentUser = data.user;
+                    showResult('loginResult', `Success: ${data.message}`, 'success');
+                } else {
+                    showResult('loginResult', `Error: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                showResult('loginResult', `Network Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testFormSubmission() {
+            if (!currentToken) {
+                showResult('formResult', 'Please login first', 'error');
+                return;
+            }
+
+            const name = document.getElementById('formName').value;
+            const age = document.getElementById('formAge').value;
+            const phone = document.getElementById('formPhone').value;
+            const email = document.getElementById('formEmail').value;
+
+            if (!name || !age || !phone || !email) {
+                showResult('formResult', 'Please fill all fields', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:5000/api/submit-form', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${currentToken}`
+                    },
+                    body: JSON.stringify({ name, age, number: phone, email })
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    showResult('formResult', `Success: ${data.message}`, 'success');
+                    document.getElementById('formName').value = '';
+                    document.getElementById('formAge').value = '';
+                    document.getElementById('formPhone').value = '';
+                    document.getElementById('formEmail').value = '';
+                } else {
+                    showResult('formResult', `Error: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                showResult('formResult', `Network Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testGetFormData() {
+            if (!currentToken) {
+                showResult('getDataResult', 'Please login first', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('http://localhost:5000/api/form-data', {
+                    headers: {
+                        'Authorization': `Bearer ${currentToken}`
+                    }
+                });
+
+                const data = await response.json();
+                
+                if (response.ok) {
+                    if (data.length === 0) {
+                        showResult('getDataResult', 'No data found', 'success');
+                    } else {
+                        const tableHTML = createDataTable(data);
+                        showResult('getDataResult', tableHTML, 'success');
+                    }
+                } else {
+                    showResult('getDataResult', `Error: ${data.message}`, 'error');
+                }
+            } catch (error) {
+                showResult('getDataResult', `Network Error: ${error.message}`, 'error');
+            }
+        }
+
+        function createDataTable(data) {
+            let table = '<table border="1" style="width:100%; border-collapse: collapse; margin-top: 10px;">';
+            table += '<tr><th>Name</th><th>Age</th><th>Phone</th><th>Email</th><th>Submitted At</th></tr>';
+            
+            data.forEach(item => {
+                const date = new Date(item.submittedAt).toLocaleString();
+                table += `<tr>
+                    <td>${item.name}</td>
+                    <td>${item.age}</td>
+                    <td>${item.number}</td>
+                    <td>${item.email}</td>
+                    <td>${date}</td>
+                </tr>`;
+            });
+            
+            table += '</table>';
+            return table;
+        }
+
+        function showResult(elementId, message, type) {
+            const element = document.getElementById(elementId);
+            element.innerHTML = message;
+            element.className = `result ${type}`;
+        }
+
+        document.getElementById('signupUsername').value = 'testuser';
+        document.getElementById('signupEmail').value = 'test@example.com';
+        document.getElementById('signupPassword').value = 'password123';
+    </script>
+</body>
+</html>

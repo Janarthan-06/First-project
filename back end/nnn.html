@@ -1,0 +1,62 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Random User Generator</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin: 20px;
+    }
+    #user {
+      text-align: center;
+      margin-top: 20px;
+    }
+    img {
+      border-radius: 50%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Random User Generator</h1>
+  <button onclick="generateUser()">Get Random User</button>
+
+  <div id="user">
+    <p>Click the button to get a random user.</p>
+  </div>
+
+  <script>
+    // script.js
+// Function to fetch random user data
+async function generateUser() {
+  const userDiv = document.getElementById('user');
+  try {
+    // Fetching random user data
+    const response = await fetch('https://randomu');
+    const data = await response.json();
+    const user = data.results[0];
+    // Extracting necessary data
+    const name = `${user.name.first} ${user.name.last}`;
+    const email = user.email;
+    const location = `${user.location.city}, ${user.location.country}`;
+    const picture = user.picture.large;
+    // Displaying the user information
+    userDiv.innerHTML = `
+      <img src="${picture}" alt="Profile Picture">
+      <h2>${name}</h2>
+      <p>Email: ${email}</p>
+      <p>Location: ${location}</p>
+    `;
+  } catch (error) {
+    // Displaying an error message if something goes wrong
+    userDiv.innerHTML = `<p>Failed to fetch user data. Please try again.</p>`;
+  }
+}
+  </script>
+</body>
+</html>
