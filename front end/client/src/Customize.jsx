@@ -26,6 +26,64 @@ function Customize({ onLogout, user, token }) {
     ]
   });
 
+  const [prevCustomizationData, setPrevCustomizationData] = useState(null);
+
+  const deepClone = (obj) => JSON.parse(JSON.stringify(obj));
+  const savePrev = () => setPrevCustomizationData(deepClone(customizationData));
+
+  const generateRandomFormName = () => `Form-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+
+  const DEFAULT_TEMPLATE = () => ({
+    formName: generateRandomFormName(),
+    formTitle: 'Data Entry Form',
+    formHeader: '',
+    formFields: [
+      { name: 'name', label: 'Name', required: true, type: 'text' },
+      { name: 'age', label: 'Age', required: true, type: 'number' },
+      { name: 'number', label: 'Phone Number', required: true, type: 'tel' },
+      { name: 'email', label: 'Email', required: true, type: 'email' },
+      { name: 'hobby', label: 'Hobby', required: false, type: 'text' }
+    ],
+    excelColumns: [
+      { name: 'name', label: 'Name', required: true },
+      { name: 'age', label: 'Age', required: true },
+      { name: 'number', label: 'Phone Number', required: true },
+      { name: 'email', label: 'Email', required: true },
+      { name: 'hobby', label: 'Hobby', required: false }
+    ]
+  });
+
+  const ensureStaticFields = (data) => {
+    // Ensure phone and email exist and are locked as required with proper types
+    let fields = [...(data.formFields || [])];
+    const ensureField = (arr, name, fallback) => {
+      const idx = arr.findIndex(f => f.name === name);
+      if (idx === -1) {
+        return [...arr, fallback];
+      }
+      const f = arr[idx];
+      const locked = name === 'number' ? { name: 'number', label: 'Phone Number', required: true, type: 'tel' }
+        : { name: 'email', label: 'Email', required: true, type: 'email' };
+      arr[idx] = { ...locked };
+      return arr;
+    };
+    fields = ensureField(fields, 'number', { name: 'number', label: 'Phone Number', required: true, type: 'tel' });
+    fields = ensureField(fields, 'email', { name: 'email', label: 'Email', required: true, type: 'email' });
+
+    let excelColumns = [...(data.excelColumns || [])];
+    const ensureCol = (arr, name, fallback) => {
+      const idx = arr.findIndex(c => c.name === name);
+      if (idx === -1) return [...arr, fallback];
+      const c = arr[idx];
+      arr[idx] = { ...c, name, label: fallback.label, required: true };
+      return arr;
+    };
+    excelColumns = ensureCol(excelColumns, 'number', { name: 'number', label: 'Phone Number', required: true });
+    excelColumns = ensureCol(excelColumns, 'email', { name: 'email', label: 'Email', required: true });
+
+    return { ...data, formFields: fields, excelColumns };
+  };
+
   const [message, setMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -52,13 +110,14 @@ function Customize({ onLogout, user, token }) {
             excelColumns: data.excelColumns
           };
           if (loaded && Array.isArray(loaded.formFields) && Array.isArray(loaded.excelColumns)) {
-            setCustomizationData({
-              formName: loaded.formName || '',
+            const ensured = ensureStaticFields({
+              formName: (loaded.formName && loaded.formName.trim()) || (isNewForm ? generateRandomFormName() : ''),
               formTitle: loaded.formTitle || 'Data Entry Form',
               formHeader: loaded.formHeader || '',
               formFields: loaded.formFields,
               excelColumns: loaded.excelColumns
             });
+            setCustomizationData(ensured);
           }
         }
       } catch (e) {
@@ -69,50 +128,101 @@ function Customize({ onLogout, user, token }) {
   }, [token]);
 
   const handleFieldChange = (index, field, value) => {
+    const target = customizationData.formFields[index];
+    if (!target) return;
+    if (target.name === 'number' || target.name === 'email') {
+      // Disallow any changes to static fields
+      return;
+    }
+    savePrev();
     const newFields = [...customizationData.formFields];
     newFields[index] = { ...newFields[index], [field]: value };
-    setCustomizationData({ ...customizationData, formFields: newFields });
+    setCustomizationData(ensureStaticFields({ ...customizationData, formFields: newFields }));
   };
 
   const handleColumnChange = (index, field, value) => {
+    const col = customizationData.excelColumns[index];
+    if (!col) return;
+    if (col.name === 'number' || col.name === 'email') {
+      return;
+    }
+    savePrev();
     const newColumns = [...customizationData.excelColumns];
     newColumns[index] = { ...newColumns[index], [field]: value };
-    setCustomizationData({ ...customizationData, excelColumns: newColumns });
+    setCustomizationData(ensureStaticFields({ ...customizationData, excelColumns: newColumns }));
   };
 
   const addField = () => {
-    const newField = { name: '', label: '', required: false, type: 'text' };
-    setCustomizationData({
+    const existingCount = (customizationData.formFields || []).length + 1;
+    const defaultName = `field_${existingCount}`;
+    const defaultLabel = `Field ${existingCount}`;
+    const newField = { name: defaultName, label: defaultLabel, required: false, type: 'text' };
+    savePrev();
+    setCustomizationData(ensureStaticFields({
       ...customizationData,
       formFields: [...customizationData.formFields, newField]
-    });
+    }));
   };
 
   const removeField = (index) => {
+    const target = customizationData.formFields[index];
+    if (!target) return;
+    if (target.name === 'number' || target.name === 'email') return; // lock static fields
+    savePrev();
     const newFields = customizationData.formFields.filter((_, i) => i !== index);
-    setCustomizationData({ ...customizationData, formFields: newFields });
+    setCustomizationData(ensureStaticFields({ ...customizationData, formFields: newFields }));
   };
 
   const addColumn = () => {
     const newColumn = { name: '', label: '', required: false };
-    setCustomizationData({
+    savePrev();
+    setCustomizationData(ensureStaticFields({
       ...customizationData,
       excelColumns: [...customizationData.excelColumns, newColumn]
-    });
+    }));
   };
 
   const removeColumn = (index) => {
+    const target = customizationData.excelColumns[index];
+    if (!target) return;
+    if (target.name === 'number' || target.name === 'email') return;
+    savePrev();
     const newColumns = customizationData.excelColumns.filter((_, i) => i !== index);
-    setCustomizationData({ ...customizationData, excelColumns: newColumns });
+    setCustomizationData(ensureStaticFields({ ...customizationData, excelColumns: newColumns }));
+  };
+
+  const handleUndo = () => {
+    if (prevCustomizationData) {
+      setCustomizationData(prevCustomizationData);
+      setPrevCustomizationData(null);
+    }
+  };
+
+  const handleReset = () => {
+    savePrev();
+    setCustomizationData(DEFAULT_TEMPLATE());
   };
 
   const handleSave = async () => {
     setIsSaving(true);
     setMessage('');
     
-    // Validate form name for new forms
-    if (isNewForm && !customizationData.formName.trim()) {
+    // Validate form name
+    if (!customizationData.formName.trim()) {
       setMessage('Form name is required');
+      setIsSaving(false);
+      return;
+    }
+
+    // Validate fields: no empty name/label
+    const invalidIndexes = (customizationData.formFields || []).reduce((acc, f, idx) => {
+      const isStatic = f.name === 'number' || f.name === 'email';
+      if (isStatic) return acc;
+      if (!String(f.name || '').trim() || !String(f.label || '').trim()) acc.push(idx + 1);
+      return acc;
+    }, []);
+    if (invalidIndexes.length > 0) {
+      setMessage(`Please fill name and label for field(s): ${invalidIndexes.join(', ')}`);
       setIsSaving(false);
       return;
     }
@@ -134,7 +244,7 @@ function Customize({ onLogout, user, token }) {
           'Content-Type': 'application/json', 
           Authorization: `Bearer ${token}` 
         },
-        body: JSON.stringify(customizationData)
+        body: JSON.stringify(ensureStaticFields(customizationData))
       });
       
       if (res.ok) {
@@ -242,26 +352,24 @@ function Customize({ onLogout, user, token }) {
             Form Customization
           </h2>
           
-          {isNewForm && (
-            <div style={{ marginBottom: '20px' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
-                Form Name: <span style={{ color: '#ef4444' }}>*</span>
-              </label>
-              <input
-                type="text"
-                value={customizationData.formName}
-                onChange={(e) => setCustomizationData({...customizationData, formName: e.target.value})}
-                placeholder="Enter a unique name for this form"
-                style={{
-                  width: '100%',
-                  padding: '8px 12px',
-                  border: '1px solid #d1d5db',
-                  borderRadius: '6px',
-                  fontSize: '14px'
-                }}
-              />
-            </div>
-          )}
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+              Form Name: <span style={{ color: '#ef4444' }}>*</span>
+            </label>
+            <input
+              type="text"
+              value={customizationData.formName}
+              onChange={(e) => { savePrev(); setCustomizationData({ ...customizationData, formName: e.target.value }); }}
+              placeholder="Enter a unique name for this form"
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '14px'
+              }}
+            />
+          </div>
           
           <div style={{ marginBottom: '20px' }}>
             <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
@@ -270,7 +378,7 @@ function Customize({ onLogout, user, token }) {
             <input
               type="text"
               value={customizationData.formTitle}
-              onChange={(e) => setCustomizationData({...customizationData, formTitle: e.target.value})}
+              onChange={(e) => { savePrev(); setCustomizationData({...customizationData, formTitle: e.target.value}); }}
               style={{
                 width: '100%',
                 padding: '8px 12px',
@@ -325,6 +433,7 @@ function Customize({ onLogout, user, token }) {
                       borderRadius: '4px',
                       fontSize: '12px'
                     }}
+                    disabled={field.name === 'number' || field.name === 'email'}
                   />
                 </div>
                 
@@ -343,6 +452,7 @@ function Customize({ onLogout, user, token }) {
                       borderRadius: '4px',
                       fontSize: '12px'
                     }}
+                    disabled={field.name === 'number' || field.name === 'email'}
                   />
                 </div>
                 
@@ -360,6 +470,7 @@ function Customize({ onLogout, user, token }) {
                       borderRadius: '4px',
                       fontSize: '12px'
                     }}
+                    disabled={field.name === 'number' || field.name === 'email'}
                   >
                     <option value="text">Text</option>
                     <option value="email">Email</option>
@@ -374,6 +485,7 @@ function Customize({ onLogout, user, token }) {
                     type="checkbox"
                     checked={field.required}
                     onChange={(e) => handleFieldChange(index, 'required', e.target.checked)}
+                    disabled={field.name === 'number' || field.name === 'email'}
                     style={{ marginRight: '8px' }}
                   />
                   <label style={{ fontSize: '12px' }}>Required</label>
@@ -383,6 +495,7 @@ function Customize({ onLogout, user, token }) {
           ))}
           
           <button
+            type="button"
             onClick={addField}
             style={{
               padding: '8px 16px',
@@ -396,6 +509,9 @@ function Customize({ onLogout, user, token }) {
           >
             + Add Field
           </button>
+          <div style={{ marginTop: '8px', color: '#6b7280', fontSize: '12px' }}>
+            Note: Phone Number and Email are required and cannot be edited or removed.
+          </div>
         </div>
 
         {/* Live Preview (mirrors Form.jsx layout and classes) */}
@@ -407,7 +523,7 @@ function Customize({ onLogout, user, token }) {
             <input
               type="text"
               value={customizationData.formHeader}
-              onChange={(e) => setCustomizationData({ ...customizationData, formHeader: e.target.value })}
+              onChange={(e) => { savePrev(); setCustomizationData({ ...customizationData, formHeader: e.target.value }); }}
               placeholder="Enter form header (above the form)"
               style={{
                 width: '70%',
@@ -436,62 +552,62 @@ function Customize({ onLogout, user, token }) {
                     <h4 style={{ whiteSpace: 'nowrap', marginLeft:'30px', textAlign: 'center' }}>{customizationData.formHeader || 'Enter your information below and Submit the form .'}</h4>
                   </div>
                   <form className="data-form surface" style={{ padding: '16px', borderRadius: '12px', marginLeft:'130px'}} onSubmit={(e) => e.preventDefault()}>
-                    {/* First row: name + age */}
-                    <div className="form-row">
-                      {(() => {
-                        const nameField = (customizationData.formFields || []).find(f => f.name === 'name') || { label: 'Name', type: 'text', required: true };
-                        const ageField = (customizationData.formFields || []).find(f => f.name === 'age') || { label: 'Age', type: 'number', required: true };
-                        return (
-                          <>
-                            <div className="form-group">
-                              <label htmlFor="name_prev">{nameField.label || 'Name'}</label>
-                              <input id="name_prev" type={nameField.type || 'text'} className="input" placeholder={nameField.label || 'Name'} disabled required={!!nameField.required} />
-                            </div>
-                            <div className="form-group">
-                              <label htmlFor="age_prev">{ageField.label || 'Age'}</label>
-                              <input id="age_prev" type={ageField.type || 'number'} className="input" placeholder={ageField.label || 'Age'} disabled required={!!ageField.required} />
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-
-                    {/* Second row: number + email */}
-                    <div className="form-row">
-                      {(() => {
-                        const numberField = (customizationData.formFields || []).find(f => f.name === 'number') || { label: 'Phone Number', type: 'tel', required: true };
-                        const emailField = (customizationData.formFields || []).find(f => f.name === 'email') || { label: 'Email', type: 'email', required: true };
-                        return (
-                          <>
-                            <div className="form-group">
-                              <label htmlFor="number_prev">{numberField.label || 'Phone Number'}</label>
-                              <input id="number_prev" type={numberField.type || 'tel'} className="input" placeholder={numberField.label || 'Phone Number'} disabled required={!!numberField.required} />
-                            </div>
-                            <div className="form-group">
-                              <label htmlFor="email_prev">{emailField.label || 'Email'}</label>
-                              <input id="email_prev" type={emailField.type || 'email'} className="input" placeholder={emailField.label || 'Email'} disabled required={!!emailField.required} />
-                            </div>
-                          </>
-                        );
-                      })()}
-                    </div>
-
-                    {/* Hobby row (optional) */}
-                    {(() => {
-                      const hobbyField = (customizationData.formFields || []).find(f => f.name === 'hobby');
-                      if (!hobbyField) return null;
-                      return (
-                        <div className="form-row">
+                    {/* Dynamic preview: renders exactly the configured fields */}
+                    {(customizationData.formFields || []).length === 0 ? (
+                      <div className="form-row"><em>No fields configured.</em></div>
+                    ) : (
+                      (customizationData.formFields || []).map((field, i) => (
+                        <div className="form-row" key={i}>
                           <div className="form-group" style={{ width: '100%' }}>
-                            <label htmlFor="hobby_prev">{hobbyField.label || 'Hobby'}</label>
-                            <input id="hobby_prev" type={hobbyField.type || 'text'} className="input" placeholder={hobbyField.label || 'Hobby'} disabled required={!!hobbyField.required} />
+                            <label htmlFor={`prev_${field.name || 'field'}_${i}`}>{field.label || field.name || 'Field'}</label>
+                            <input
+                              id={`prev_${field.name || 'field'}_${i}`}
+                              type={field.type || 'text'}
+                              className="input"
+                              placeholder={field.label || field.name || 'Field'}
+                              disabled
+                              required={!!field.required}
+                            />
                           </div>
                         </div>
-                      );
-                    })()}
+                      ))
+                    )}
 
-                    {/* Save button positioned like submit */}
-                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
+                    {/* Controls */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px' }}>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button
+                          type="button"
+                          onClick={handleUndo}
+                          disabled={!prevCustomizationData}
+                          className="btn"
+                          style={{
+                            padding: '8px 12px',
+                            backgroundColor: prevCustomizationData ? '#6b7280' : '#9ca3af',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: prevCustomizationData ? 'pointer' : 'not-allowed'
+                          }}
+                        >
+                          Undo
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleReset}
+                          className="btn"
+                          style={{
+                            padding: '8px 12px',
+                            backgroundColor: '#374151',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '6px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Reset to Default
+                        </button>
+                      </div>
                       <button
                         type="button"
                         onClick={handleSave}
