@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 function Form({ onLogout, user, token }) {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const formId = searchParams.get('formId');
   const [formData, setFormData] = useState({ name: '', age: '', number: '', email: '', hobby: '' });
   const [submittedData, setSubmittedData] = useState([]);
   const [message, setMessage] = useState('');
@@ -12,10 +16,57 @@ function Form({ onLogout, user, token }) {
   const [filters, setFilters] = useState({ name: '', age: '', number: '', email: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'submittedAt', direction: 'desc' });
+  const [customization, setCustomization] = useState({ formTitle: 'Data Entry Form', formHeader: '', formFields: [] });
+
+  // Load customization (title, header, fields)
+  useEffect(() => {
+    // Prefer cached customization immediately for UX
+    try {
+      const cached = localStorage.getItem('customization');
+      if (cached) {
+        const parsed = JSON.parse(cached);
+        if (parsed && Array.isArray(parsed.formFields)) {
+          setCustomization({
+            formTitle: parsed.formTitle || 'Data Entry Form',
+            formHeader: parsed.formHeader || '',
+            formFields: parsed.formFields
+          });
+        }
+      }
+    } catch (_) {}
+
+    const loadCustomization = async () => {
+      try {
+        let endpoint = '/api/customization';
+        if (formId) {
+          endpoint = `/api/forms/${formId}`;
+        }
+        
+        const res = await fetch(endpoint, {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setCustomization({
+            formTitle: data.formTitle || 'Data Entry Form',
+            formHeader: data.formHeader || '',
+            formFields: Array.isArray(data.formFields) ? data.formFields : []
+          });
+          try { localStorage.setItem('customization', JSON.stringify({ formTitle: data.formTitle, formHeader: data.formHeader || '', formFields: data.formFields })); } catch (_) {}
+        }
+      } catch (e) {}
+    };
+    loadCustomization();
+  }, [token, formId]);
 
   const fetchFormData = async () => {
     try {
-      const res = await fetch('/api/form-data', {
+      let url = '/api/form-data';
+      if (formId) {
+        url += `?formId=${formId}`;
+      }
+      
+      const res = await fetch(url, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -49,10 +100,25 @@ function Form({ onLogout, user, token }) {
     setIsSubmitting(true);
     setMessage('');
     try {
+      // If any field is configured as date, normalize to server schema
+      const normalized = { ...formData };
+      const ageField = (customization.formFields || []).find(f => f.name === 'age');
+      if (ageField?.type === 'date' && formData.age) {
+        // Convert date to age in years
+        const birth = new Date(formData.age);
+        if (!isNaN(birth)) {
+          const today = new Date();
+          let years = today.getFullYear() - birth.getFullYear();
+          const m = today.getMonth() - birth.getMonth();
+          if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) years--;
+          normalized.age = String(Math.max(0, years));
+        }
+      }
+
       const res = await fetch('/api/submit-form', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(formData)
+        body: JSON.stringify({ ...normalized, formId })
       });
       const data = await res.json();
       if (res.ok) {
@@ -292,8 +358,51 @@ function Form({ onLogout, user, token }) {
 
       {/* Logout button positioned at top-right */}
       <button className="logout-button-top-right" onClick={onLogout}>Logout</button>
+      
+      {/* Edit button positioned next to logout */}
+      <button 
+        className="edit-button-top-right" 
+        onClick={() => navigate(formId ? `/customize?formId=${formId}` : '/customize')}
+        style={{
+          position: 'absolute',
+          top: '20px',
+          marginRight:'5%',
+          right: '120px',
+          padding: '8px 16px',
+          backgroundColor: '#3b82f6',
+          color: 'white',
+          border: 'none',
+          borderRadius: '6px',
+          cursor: 'pointer',
+          fontSize: '14px',
+          fontWeight: '500'
+        }}
+      >
+        Edit
+      </button>
+      
+      {/* Back to Dashboard button */}
+      <button 
+        className="back-button-top-left" 
+        onClick={() => navigate('/')}
+        style={{
+          position: 'absolute',
+          top: '20px',
+          left: '20px',
+          padding: '8px 16px',
+          backgroundColor: '#6b7280',
+          color: 'white',
+          border: 'none',
+          borderRadius: '6px',
+          cursor: 'pointer',
+          fontSize: '14px',
+          fontWeight: '500'
+        }}
+      >
+        ← Dashboard
+      </button>
 
-      <h1 className="page-title" style={{ fontWeight: 'bold', textAlign: 'center' }}>Data Entry Form</h1>
+      <h1 className="page-title" style={{ fontWeight: 'bold', textAlign: 'center' }}>{customization.formTitle || 'Data Entry Form'}</h1>
       <div className='container' >
 
      
@@ -392,36 +501,58 @@ function Form({ onLogout, user, token }) {
 
           <div style={{ flex: '0 0 30%', boxSizing: 'border-box',marginLeft:'0%'}}>
             <div className="form-header2">
-              <h4 style={{ whiteSpace: 'nowrap' }}>Enter your information below and Submit the form .</h4>
+              <h4 style={{ whiteSpace: 'nowrap', textAlign: 'center' }}>{customization.formHeader || 'Enter your information below and Submit the form .'}</h4>
             </div>
             <form id="created"  onSubmit={handleSubmit} className="data-form surface" style={{ padding: '16px', borderRadius: '12px' }}>
               <div className="form-row">
-                <div className="form-group">
-                  <label htmlFor="name">Name</label>
-                  <input id="name" name="name" type="text" value={formData.name} onChange={handleChange} required className="input" />
-                </div>
-                <div className="form-group">
-                  <label htmlFor="age">Age</label>
-                  <input id="age" name="age" type="number" value={formData.age} onChange={handleChange} required className="input" />
-                </div>
+                {(() => {
+                  const nameField = (customization.formFields || []).find(f => f.name === 'name');
+                  const ageField = (customization.formFields || []).find(f => f.name === 'age');
+                  return (
+                    <>
+                      <div className="form-group">
+                        <label htmlFor="name">{nameField?.label || 'Name'}</label>
+                        <input id="name" name="name" type={nameField?.type || 'text'} value={formData.name} onChange={handleChange} required={nameField?.required ?? true} className="input" />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="age">{ageField?.label || 'Age'}</label>
+                        <input id="age" name="age" type={ageField?.type || 'number'} value={formData.age} onChange={handleChange} required={ageField?.required ?? true} className="input" />
+                      </div>
+                    </>
+                  );
+                })()}
             </div>
               <div className="form-row">
-                <div className="form-group">
-                  <label htmlFor="number">Phone Number</label>
-                  <input id="number" name="number" type="tel" value={formData.number} onChange={handleChange} required className="input" />
-            </div>
-                <div className="form-group">
-                  <label htmlFor="email">Email</label>
-                  <input id="email" name="email" type="email" value={formData.email} onChange={handleChange} required className="input" />
-            </div>
+                {(() => {
+                  const numberField = (customization.formFields || []).find(f => f.name === 'number');
+                  const emailField = (customization.formFields || []).find(f => f.name === 'email');
+                  return (
+                    <>
+                      <div className="form-group">
+                        <label htmlFor="number">{numberField?.label || 'Phone Number'}</label>
+                        <input id="number" name="number" type={numberField?.type || 'tel'} value={formData.number} onChange={handleChange} required={numberField?.required ?? true} className="input" />
+                      </div>
+                      <div className="form-group">
+                        <label htmlFor="email">{emailField?.label || 'Email'}</label>
+                        <input id="email" name="email" type={emailField?.type || 'email'} value={formData.email} onChange={handleChange} required={emailField?.required ?? true} className="input" />
+                      </div>
+                    </>
+                  );
+                })()}
             </div>
 
-            <div className="form-row">
-              <div className="form-group" style={{ width: '100%' }}>
-                <label htmlFor="hobby">Hobby (optional)</label>
-                <input id="hobby" name="hobby" type="text" value={formData.hobby} onChange={handleChange} className="input" placeholder="e.g., Reading, Football" />
-              </div>
-            </div>
+            {(() => {
+              const hobbyField = (customization.formFields || []).find(f => f.name === 'hobby');
+              if (!hobbyField) return null;
+              return (
+                <div className="form-row">
+                  <div className="form-group" style={{ width: '100%' }}>
+                    <label htmlFor="hobby">{hobbyField.label || 'Hobby'}</label>
+                    <input id="hobby" name="hobby" type={hobbyField.type || 'text'} value={formData.hobby} onChange={handleChange} className="input" placeholder="e.g., Reading, Football" required={hobbyField.required ?? false} />
+                  </div>
+                </div>
+              );
+            })()}
 
               {message && <div className={`message ${message.includes('success') ? 'success' : 'error'}`}>{message}</div>}
 

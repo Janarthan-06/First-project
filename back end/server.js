@@ -9,6 +9,8 @@ const XLSX = require('xlsx');
 const path = require('path');
 require('dotenv').config();
 
+
+
 app.use(cors());
 app.use(express.urlencoded({extended:true}));
 app.use(express.json()); 
@@ -41,11 +43,55 @@ const formDataSchema = new mongoose.Schema({
     email: { type: String, required: true },
     hobby: { type: String }, // Optional field
     submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    formId: { type: mongoose.Schema.Types.ObjectId, ref: 'FormConfig' }, // Link to form configuration
     submittedAt: { type: Date, default: Date.now }
+});
+
+// Form Configuration Schema (for multiple forms per user)
+const formConfigSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+    formName: { type: String, required: true },
+    formTitle: { type: String, default: 'Data Entry Form' },
+    formHeader: { type: String, default: '' },
+    formFields: [{
+        name: { type: String, required: true },
+        label: { type: String, required: true },
+        required: { type: Boolean, default: false },
+        type: { type: String, enum: ['text', 'number', 'tel', 'email', 'date'], default: 'text' },
+        visible: { type: Boolean, default: true }
+    }],
+    excelColumns: [{
+        name: { type: String, required: true },
+        label: { type: String, required: true },
+        required: { type: Boolean, default: false }
+    }],
+    createdAt: { type: Date, default: Date.now },
+    updatedAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', userSchema);
 const FormData = mongoose.model('FormData', formDataSchema);
+const FormConfig = mongoose.model('FormConfig', formConfigSchema);
+
+// Customization Schema (per user)
+const customizationSchema = new mongoose.Schema({
+    userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', unique: true },
+    formTitle: { type: String, default: 'Data Entry Form' },
+    formHeader: { type: String, default: '' },
+    formFields: [{
+        name: { type: String, required: true },
+        label: { type: String, required: true },
+        required: { type: Boolean, default: false },
+        type: { type: String, enum: ['text', 'number', 'tel', 'email', 'date'], default: 'text' }
+    }],
+    excelColumns: [{
+        name: { type: String, required: true },
+        label: { type: String, required: true },
+        required: { type: Boolean, default: false }
+    }],
+    updatedAt: { type: Date, default: Date.now }
+});
+const Customization = mongoose.model('Customization', customizationSchema);
 
 // JWT Secret (use env in production)
 const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key-here';
@@ -101,8 +147,8 @@ app.post('/api/login', async (req, res) => {
 // Submit form (protected)
 app.post('/api/submit-form', authenticateToken, async (req, res) => {
     try {
-        const { name, age, number, email, hobby } = req.body;
-        const newFormData = new FormData({ name, age, number, email, hobby, submittedBy: req.user.userId });
+        const { name, age, number, email, hobby, formId } = req.body;
+        const newFormData = new FormData({ name, age, number, email, hobby, submittedBy: req.user.userId, formId });
         await newFormData.save();
         res.status(201).json({ message: 'Form submitted successfully', data: newFormData });
     } catch (err) {
@@ -114,7 +160,10 @@ app.post('/api/submit-form', authenticateToken, async (req, res) => {
 // Get form data (protected)
 app.get('/api/form-data', authenticateToken, async (req, res) => {
     try {
-        const list = await FormData.find({ submittedBy: req.user.userId }).sort({ submittedAt: -1 });
+        const { formId } = req.query;
+        const query = { submittedBy: req.user.userId };
+        if (formId) query.formId = formId;
+        const list = await FormData.find(query).sort({ submittedAt: -1 });
         res.json(list);
     } catch (err) {
         console.error('Error fetching form data:', err);
@@ -146,7 +195,7 @@ app.post('/api/upload-excel', authenticateToken, multer({ storage: multer.memory
     const worksheet = workbook.Sheets[sheetName];
     
     // Convert to JSON
-    const jsonData = XLSX.utils.sheet_to_json(worksheet);
+    const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
     
     console.log('Excel data parsed:', jsonData.slice(0, 2)); // Log first 2 rows for debugging
     
@@ -157,18 +206,58 @@ app.post('/api/upload-excel', authenticateToken, multer({ storage: multer.memory
     let importedCount = 0;
     const errors = [];
 
+    // Load customization for current user to map columns dynamically
+    let customization = null;
+    try {
+      customization = await Customization.findOne({ userId: req.user.userId });
+    } catch (_) {}
+
+    // Build a helper to read values from a row by known keys/labels
+    const getValueByAliases = (row, aliases) => {
+      for (const alias of aliases) {
+        if (Object.prototype.hasOwnProperty.call(row, alias) && row[alias] !== undefined && row[alias] !== null && String(row[alias]).trim() !== '') {
+          return row[alias];
+        }
+      }
+      return '';
+    };
+
     // Process each row
     for (let i = 0; i < jsonData.length; i++) {
       const row = jsonData[i];
       
       try {
-        // Map Excel columns to our schema (flexible mapping)
+        // Default aliases if no customization is present
+        let nameAliases = ['Name', 'name', 'NAME', 'Full Name', 'Full name', 'full name'];
+        let ageAliases = ['Age', 'age', 'AGE', 'Age (Years)', 'Age (years)', 'age (years)'];
+        let numberAliases = ['Number', 'Phone', 'number', 'phone', 'NUMBER', 'PHONE', 'Phone Number', 'Phone number', 'phone number', 'Mobile', 'mobile'];
+        let emailAliases = ['Email', 'email', 'EMAIL', 'Email Address', 'Email address', 'email address'];
+        let hobbyAliases = ['Hobby', 'hobby', 'HOBBY'];
+
+        // If customization exists, prefer its column labels/names as first aliases
+        if (customization) {
+          const pushFront = (arr, v) => { if (v && !arr.includes(v)) arr.unshift(v); };
+          const colByName = (n) => (Array.isArray(customization.excelColumns) ? customization.excelColumns : []).find(c => c.name === n)
+            || (Array.isArray(customization.formFields) ? customization.formFields : []).find(c => c.name === n);
+          const maybeAlias = (c) => [c?.label, c?.name].filter(Boolean);
+          const nameCol = colByName('name');
+          const ageCol = colByName('age');
+          const numberCol = colByName('number');
+          const emailCol = colByName('email');
+          const hobbyCol = colByName('hobby');
+          maybeAlias(nameCol).forEach(v => pushFront(nameAliases, v));
+          maybeAlias(ageCol).forEach(v => pushFront(ageAliases, v));
+          maybeAlias(numberCol).forEach(v => pushFront(numberAliases, v));
+          maybeAlias(emailCol).forEach(v => pushFront(emailAliases, v));
+          maybeAlias(hobbyCol).forEach(v => pushFront(hobbyAliases, v));
+        }
+
         const formData = {
-          name: row.Name || row.name || row.NAME || row['Full Name'] || row['Full name'] || row['full name'] || '',
-          age: parseInt(row.Age || row.age || row.AGE || row['Age (Years)'] || row['Age (years)'] || row['age (years)'] || 0) || 0,
-          number: String(row.Number || row.Phone || row.number || row.phone || row.NUMBER || row.PHONE || row['Phone Number'] || row['Phone number'] || row['phone number'] || row['Mobile'] || row['mobile'] || ''),
-          email: row.Email || row.email || row.EMAIL || row['Email Address'] || row['Email address'] || row['email address'] || '',
-          hobby: row.Hobby || row.hobby || row.HOBBY || '',
+          name: getValueByAliases(row, nameAliases),
+          age: parseInt(getValueByAliases(row, ageAliases) || 0) || 0,
+          number: String(getValueByAliases(row, numberAliases) || ''),
+          email: getValueByAliases(row, emailAliases),
+          hobby: getValueByAliases(row, hobbyAliases) || '',
           submittedBy: req.user.userId,
           submittedAt: new Date()
         };
@@ -273,6 +362,198 @@ app.delete('/api/form-data/:id', authenticateToken, async (req, res) => {
     res.json({ message: 'Record deleted successfully' });
   } catch (err) {
     console.error('Delete error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get customization settings (protected)
+app.get('/api/customization', authenticateToken, async (req, res) => {
+  try {
+    const customization = await Customization.findOne({ userId: req.user.userId });
+    if (!customization) {
+      // default payload
+      return res.json({
+        formTitle: 'Data Entry Form',
+        formHeader: '',
+        formFields: [
+          { name: 'name', label: 'Name', required: true, type: 'text' },
+          { name: 'age', label: 'Age', required: true, type: 'number' },
+          { name: 'number', label: 'Phone Number', required: true, type: 'tel' },
+          { name: 'email', label: 'Email', required: true, type: 'email' },
+          { name: 'hobby', label: 'Hobby', required: false, type: 'text' }
+        ],
+        excelColumns: []
+      });
+    }
+    res.json(customization);
+  } catch (err) {
+    console.error('Get customization error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Save customization settings (protected, upsert)
+app.post('/api/save-customization', authenticateToken, async (req, res) => {
+  try {
+    const { formTitle, formHeader, formFields, excelColumns } = req.body;
+
+    if (!formTitle || !Array.isArray(formFields)) {
+      return res.status(400).json({ message: 'Invalid customization payload' });
+    }
+
+    // Derive excelColumns from formFields if not provided
+    const derivedExcelColumns = Array.isArray(excelColumns) && excelColumns.length > 0
+      ? excelColumns
+      : formFields.map(f => ({ name: f.name, label: f.label, required: !!f.required }));
+
+    const updated = await Customization.findOneAndUpdate(
+      { userId: req.user.userId },
+      { userId: req.user.userId, formTitle, formHeader: formHeader || '', formFields, excelColumns: derivedExcelColumns, updatedAt: new Date() },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    res.json({ message: 'Customization saved successfully', data: updated });
+  } catch (err) {
+    console.error('Save customization error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get all forms for user (dashboard)
+app.get('/api/forms', authenticateToken, async (req, res) => {
+  try {
+    const forms = await FormConfig.find({ userId: req.user.userId }).sort({ createdAt: -1 });
+    res.json(forms);
+  } catch (err) {
+    console.error('Get forms error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Create new form
+app.post('/api/forms', authenticateToken, async (req, res) => {
+  try {
+    const { formName, formTitle, formHeader, formFields, excelColumns } = req.body;
+
+    if (!formName || !Array.isArray(formFields)) {
+      return res.status(400).json({ message: 'Form name and fields are required' });
+    }
+
+    // Check if form name already exists for this user
+    const existingForm = await FormConfig.findOne({ userId: req.user.userId, formName });
+    if (existingForm) {
+      return res.status(400).json({ message: 'Form name already exists' });
+    }
+
+    // Derive excelColumns from formFields if not provided
+    const derivedExcelColumns = Array.isArray(excelColumns) && excelColumns.length > 0
+      ? excelColumns
+      : formFields.map(f => ({ name: f.name, label: f.label, required: !!f.required }));
+
+    const newForm = new FormConfig({
+      userId: req.user.userId,
+      formName,
+      formTitle: formTitle || 'Data Entry Form',
+      formHeader: formHeader || '',
+      formFields,
+      excelColumns: derivedExcelColumns
+    });
+
+    await newForm.save();
+    res.status(201).json({ message: 'Form created successfully', data: newForm });
+  } catch (err) {
+    console.error('Create form error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Get specific form configuration
+app.get('/api/forms/:formId', authenticateToken, async (req, res) => {
+  try {
+    const { formId } = req.params;
+    const form = await FormConfig.findOne({ _id: formId, userId: req.user.userId });
+    
+    if (!form) {
+      return res.status(404).json({ message: 'Form not found' });
+    }
+
+    res.json(form);
+  } catch (err) {
+    console.error('Get form error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Update form configuration
+app.put('/api/forms/:formId', authenticateToken, async (req, res) => {
+  try {
+    const { formId } = req.params;
+    const { formName, formTitle, formHeader, formFields, excelColumns } = req.body;
+
+    if (!formName || !Array.isArray(formFields)) {
+      return res.status(400).json({ message: 'Form name and fields are required' });
+    }
+
+    // Check if form name already exists for another form of this user
+    const existingForm = await FormConfig.findOne({ 
+      userId: req.user.userId, 
+      formName, 
+      _id: { $ne: formId } 
+    });
+    if (existingForm) {
+      return res.status(400).json({ message: 'Form name already exists' });
+    }
+
+    // Derive excelColumns from formFields if not provided
+    const derivedExcelColumns = Array.isArray(excelColumns) && excelColumns.length > 0
+      ? excelColumns
+      : formFields.map(f => ({ name: f.name, label: f.label, required: !!f.required }));
+
+    const updatedForm = await FormConfig.findOneAndUpdate(
+      { _id: formId, userId: req.user.userId },
+      { 
+        formName, 
+        formTitle: formTitle || 'Data Entry Form', 
+        formHeader: formHeader || '', 
+        formFields, 
+        excelColumns: derivedExcelColumns,
+        updatedAt: new Date()
+      },
+      { new: true, runValidators: true }
+    );
+
+    if (!updatedForm) {
+      return res.status(404).json({ message: 'Form not found' });
+    }
+
+    res.json({ message: 'Form updated successfully', data: updatedForm });
+  } catch (err) {
+    console.error('Update form error:', err);
+    res.status(500).json({ message: 'Internal server error' });
+  }
+});
+
+// Delete form
+app.delete('/api/forms/:formId', authenticateToken, async (req, res) => {
+  try {
+    const { formId } = req.params;
+
+    // Delete form configuration
+    const deletedForm = await FormConfig.findOneAndDelete({ 
+      _id: formId, 
+      userId: req.user.userId 
+    });
+
+    if (!deletedForm) {
+      return res.status(404).json({ message: 'Form not found' });
+    }
+
+    // Also delete all form data associated with this form
+    await FormData.deleteMany({ formId });
+
+    res.json({ message: 'Form deleted successfully' });
+  } catch (err) {
+    console.error('Delete form error:', err);
     res.status(500).json({ message: 'Internal server error' });
   }
 });
