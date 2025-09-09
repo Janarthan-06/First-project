@@ -10,6 +10,7 @@ function Customize({ onLogout, user, token }) {
     formName: '',
     formTitle: 'Data Entry Form',
     formHeader: '',
+    submitText: 'Submit',
     formFields: [
       { name: 'name', label: 'Name', required: true, type: 'text' },
       { name: 'age', label: 'Age', required: true, type: 'number' },
@@ -37,6 +38,7 @@ function Customize({ onLogout, user, token }) {
     formName: generateRandomFormName(),
     formTitle: 'Data Entry Form',
     formHeader: '',
+    submitText: 'Submit',
     formFields: [
       { name: 'name', label: 'Name', required: true, type: 'text' },
       { name: 'age', label: 'Age', required: true, type: 'number' },
@@ -106,6 +108,7 @@ function Customize({ onLogout, user, token }) {
             formName: data.formName || '',
             formTitle: data.formTitle,
             formHeader: data.formHeader || '',
+            submitText: data.submitText || 'Submit',
             formFields: data.formFields,
             excelColumns: data.excelColumns
           };
@@ -114,6 +117,7 @@ function Customize({ onLogout, user, token }) {
               formName: (loaded.formName && loaded.formName.trim()) || (isNewForm ? generateRandomFormName() : ''),
               formTitle: loaded.formTitle || 'Data Entry Form',
               formHeader: loaded.formHeader || '',
+              submitText: loaded.submitText || 'Submit',
               formFields: loaded.formFields,
               excelColumns: loaded.excelColumns
             });
@@ -201,6 +205,26 @@ function Customize({ onLogout, user, token }) {
   const handleReset = () => {
     savePrev();
     setCustomizationData(DEFAULT_TEMPLATE());
+  };
+
+  const moveField = (index, direction) => {
+    const newIndex = index + direction;
+    const fieldsLen = customizationData.formFields.length;
+    if (newIndex < 0 || newIndex >= fieldsLen) return;
+    savePrev();
+    const fields = [...customizationData.formFields];
+    const [moved] = fields.splice(index, 1);
+    fields.splice(newIndex, 0, moved);
+
+    // Sync excelColumns order to match fields order where names overlap
+    const fieldOrder = fields.map(f => f.name);
+    const known = customizationData.excelColumns
+      .filter(c => fieldOrder.includes(c.name))
+      .sort((a, b) => fieldOrder.indexOf(a.name) - fieldOrder.indexOf(b.name));
+    const extras = customizationData.excelColumns.filter(c => !fieldOrder.includes(c.name));
+    const columns = [...known, ...extras];
+
+    setCustomizationData(ensureStaticFields({ ...customizationData, formFields: fields, excelColumns: columns }));
   };
 
   const handleSave = async () => {
@@ -389,6 +413,24 @@ function Customize({ onLogout, user, token }) {
             />
           </div>
 
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ display: 'block', marginBottom: '8px', fontWeight: '500' }}>
+              Submit Button Text:
+            </label>
+            <input
+              type="text"
+              value={customizationData.submitText}
+              onChange={(e) => { savePrev(); setCustomizationData({ ...customizationData, submitText: e.target.value }); }}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '14px'
+              }}
+            />
+          </div>
+
           <h3 style={{ marginBottom: '16px', color: '#374151' }}>Form Fields</h3>
           
           {customizationData.formFields.map((field, index) => (
@@ -490,6 +532,24 @@ function Customize({ onLogout, user, token }) {
                   />
                   <label style={{ fontSize: '12px' }}>Required</label>
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '20px' }}>
+                  <button
+                    type="button"
+                    onClick={() => moveField(index, -1)}
+                    disabled={index === 0}
+                    style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #d1d5db', background: index === 0 ? '#e5e7eb' : 'white', cursor: index === 0 ? 'not-allowed' : 'pointer' }}
+                  >
+                    ↑ Move Up
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => moveField(index, 1)}
+                    disabled={index === customizationData.formFields.length - 1}
+                    style={{ padding: '4px 8px', borderRadius: '4px', border: '1px solid #d1d5db', background: index === customizationData.formFields.length - 1 ? '#e5e7eb' : 'white', cursor: index === customizationData.formFields.length - 1 ? 'not-allowed' : 'pointer' }}
+                  >
+                    ↓ Move Down
+                  </button>
+                </div>
               </div>
             </div>
           ))}
@@ -573,52 +633,58 @@ function Customize({ onLogout, user, token }) {
                       ))
                     )}
 
-                    {/* Controls */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px' }}>
-                      <div style={{ display: 'flex', gap: '8px' }}>
-                        <button
-                          type="button"
-                          onClick={handleUndo}
-                          disabled={!prevCustomizationData}
-                          className="btn"
-                          style={{
-                            padding: '8px 12px',
-                            backgroundColor: prevCustomizationData ? '#6b7280' : '#9ca3af',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            cursor: prevCustomizationData ? 'pointer' : 'not-allowed'
-                          }}
-                        >
-                          Undo
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleReset}
-                          className="btn"
-                          style={{
-                            padding: '8px 12px',
-                            backgroundColor: '#374151',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '6px',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          Reset to Default
-                        </button>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={handleSave}
-                        disabled={isSaving}
-                        className="submit-button btn btn-primary"
-                        style={{ cursor: isSaving ? 'not-allowed' : 'pointer' }}
-                      >
-                        {isSaving ? 'Saving...' : 'Save Customization'}
+                    {/* Preview submit button (disabled) */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
+                      <button type="button" className="submit-button btn btn-primary" disabled>
+                        {customizationData.submitText || 'Submit'}
                       </button>
                     </div>
                   </form>
+                  {/* Controls outside the form */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '12px' }}>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button
+                        type="button"
+                        onClick={handleUndo}
+                        disabled={!prevCustomizationData}
+                        className="btn"
+                        style={{
+                          padding: '8px 12px',
+                          backgroundColor: prevCustomizationData ? '#6b7280' : '#9ca3af',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: prevCustomizationData ? 'pointer' : 'not-allowed'
+                        }}
+                      >
+                        Undo
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleReset}
+                        className="btn"
+                        style={{
+                          padding: '8px 12px',
+                          backgroundColor: '#374151',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '6px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Reset to Default
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={isSaving}
+                      className="submit-button btn btn-primary"
+                      style={{ cursor: isSaving ? 'not-allowed' : 'pointer' }}
+                    >
+                      {isSaving ? 'Saving...' : 'Save Customization'}
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>
