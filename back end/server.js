@@ -18,12 +18,15 @@ app.use(express.json());
 const mongoDB_URL = process.env.MONGO_URI || 'mongodb+srv://Mango:mango%402006@mango.fhyv0kv.mongodb.net/?retryWrites=true&w=majority&appName=Mango'
 
 mongoose.connect(mongoDB_URL)
-.then(()=>{
-    console.log("Connected to MongoDB")
-})
-.catch((err)=>{
-    console.log("Failed to connect to MongoDB:", err)
-});
+  .then(() => {
+    console.log("==============================");
+    console.log("✅ Successfully connected to MongoDB");
+    console.log("==============================");
+  })
+  .catch((err) => {
+    console.error("❌ Failed to connect to MongoDB:", err);
+    process.exit(1); // Exit the process if connection fails
+  });
 
 // User Schema for authentication
 const userSchema = new mongoose.Schema({
@@ -35,13 +38,14 @@ const userSchema = new mongoose.Schema({
     createdAt: { type: Date, default: Date.now }
 });
 
-// Form Data Schema
+// Form Data Schema (make dynamic fields optional to support customization)
 const formDataSchema = new mongoose.Schema({
     name: { type: String, required: true },
-    age: { type: Number, required: true },
-    number: { type: String, required: true }, // Changed to String to handle phone numbers
+    age: { type: Number, required: false },
+    number: { type: String, required: true }, // String to handle phone numbers
     email: { type: String, required: true },
-    hobby: { type: String }, // Optional field
+    hobby: { type: String },
+    password: { type: String },
     submittedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     formId: { type: mongoose.Schema.Types.ObjectId, ref: 'FormConfig' }, // Link to form configuration
     submittedAt: { type: Date, default: Date.now }
@@ -147,13 +151,35 @@ app.post('/api/login', async (req, res) => {
 // Submit form (protected)
 app.post('/api/submit-form', authenticateToken, async (req, res) => {
     try {
-        const { name, age, number, email, hobby, formId } = req.body;
-        const newFormData = new FormData({ name, age, number, email, hobby, submittedBy: req.user.userId, formId });
-        await newFormData.save();
+        const { name, age, number, email, hobby, password, formId } = req.body;
+        if (!name || !number || !email) {
+          return res.status(400).json({ message: 'Name, phone number, and email are required' });
+        }
+        const payload = {
+          name: String(name),
+          number: String(number),
+          email: String(email),
+          submittedBy: req.user.userId,
+          submittedAt: new Date()
+        };
+        if (age !== undefined && age !== null && String(age).trim() !== '') payload.age = Number(age) || 0;
+        if (hobby !== undefined) payload.hobby = String(hobby);
+        if (password !== undefined) payload.password = String(password);
+        if (formId && mongoose.Types.ObjectId.isValid(formId)) payload.formId = formId;
+
+        const newFormData = new FormData(payload);
+        await newFormData.save().catch((err) => {
+          if (err && err.name === 'ValidationError') {
+            const details = Object.values(err.errors || {}).map(e => e.message).join('; ');
+            return res.status(400).json({ message: `Validation error: ${details || err.message}` });
+          }
+          throw err;
+        });
+        if (res.headersSent) return; // validation already responded
         res.status(201).json({ message: 'Form submitted successfully', data: newFormData });
     } catch (err) {
         console.error('Form submission error:', err);
-        res.status(500).json({ message: 'Internal server error' });
+        res.status(500).json({ message: 'Internal server error', error: err?.message });
     }
 });
 
@@ -185,6 +211,7 @@ app.get('/api/profile', authenticateToken, async (req, res) => {
 // Excel upload endpoint
 app.post('/api/upload-excel', authenticateToken, multer({ storage: multer.memoryStorage() }).single('excelFile'), async (req, res) => {
   try {
+    const { formId } = req.query;
     if (!req.file) {
       return res.status(400).json({ message: 'No file uploaded' });
     }
@@ -212,6 +239,14 @@ app.post('/api/upload-excel', authenticateToken, multer({ storage: multer.memory
       customization = await Customization.findOne({ userId: req.user.userId });
     } catch (_) {}
 
+    // If a specific form is targeted, also load its configuration for more precise labels
+    let formConfig = null;
+    if (formId) {
+      try {
+        formConfig = await FormConfig.findOne({ _id: formId, userId: req.user.userId });
+      } catch (_) {}
+    }
+
     // Build a helper to read values from a row by known keys/labels
     const getValueByAliases = (row, aliases) => {
       for (const alias of aliases) {
@@ -233,23 +268,29 @@ app.post('/api/upload-excel', authenticateToken, multer({ storage: multer.memory
         let numberAliases = ['Number', 'Phone', 'number', 'phone', 'NUMBER', 'PHONE', 'Phone Number', 'Phone number', 'phone number', 'Mobile', 'mobile'];
         let emailAliases = ['Email', 'email', 'EMAIL', 'Email Address', 'Email address', 'email address'];
         let hobbyAliases = ['Hobby', 'hobby', 'HOBBY'];
+        let passwordAliases = ['Password', 'password', 'PASSWORD'];
 
         // If customization exists, prefer its column labels/names as first aliases
-        if (customization) {
+        if (customization || formConfig) {
           const pushFront = (arr, v) => { if (v && !arr.includes(v)) arr.unshift(v); };
-          const colByName = (n) => (Array.isArray(customization.excelColumns) ? customization.excelColumns : []).find(c => c.name === n)
-            || (Array.isArray(customization.formFields) ? customization.formFields : []).find(c => c.name === n);
+          const colByName = (n) =>
+            (formConfig && ((Array.isArray(formConfig.excelColumns) ? formConfig.excelColumns : []).find(c => c.name === n)
+              || (Array.isArray(formConfig.formFields) ? formConfig.formFields : []).find(c => c.name === n)))
+            || (customization && ((Array.isArray(customization.excelColumns) ? customization.excelColumns : []).find(c => c.name === n)
+              || (Array.isArray(customization.formFields) ? customization.formFields : []).find(c => c.name === n)));
           const maybeAlias = (c) => [c?.label, c?.name].filter(Boolean);
           const nameCol = colByName('name');
           const ageCol = colByName('age');
           const numberCol = colByName('number');
           const emailCol = colByName('email');
           const hobbyCol = colByName('hobby');
+          const passwordCol = colByName('password');
           maybeAlias(nameCol).forEach(v => pushFront(nameAliases, v));
           maybeAlias(ageCol).forEach(v => pushFront(ageAliases, v));
           maybeAlias(numberCol).forEach(v => pushFront(numberAliases, v));
           maybeAlias(emailCol).forEach(v => pushFront(emailAliases, v));
           maybeAlias(hobbyCol).forEach(v => pushFront(hobbyAliases, v));
+          maybeAlias(passwordCol).forEach(v => pushFront(passwordAliases, v));
         }
 
         const formData = {
@@ -258,13 +299,15 @@ app.post('/api/upload-excel', authenticateToken, multer({ storage: multer.memory
           number: String(getValueByAliases(row, numberAliases) || ''),
           email: getValueByAliases(row, emailAliases),
           hobby: getValueByAliases(row, hobbyAliases) || '',
+          password: getValueByAliases(row, passwordAliases) || '',
           submittedBy: req.user.userId,
-          submittedAt: new Date()
+          submittedAt: new Date(),
+          formId: formId || undefined
         };
 
         // Validate required fields
-        if (!formData.name || !formData.email || !formData.age || !formData.number) {
-          errors.push(`Row ${i + 1}: Missing required fields (name, email, age, number)`);
+        if (!formData.name || !formData.email || !formData.number) {
+          errors.push(`Row ${i + 1}: Missing required fields (name, email, number)`);
           continue;
         }
 
@@ -313,11 +356,11 @@ app.post('/api/upload-excel', authenticateToken, multer({ storage: multer.memory
 app.put('/api/form-data/:id', authenticateToken, async (req, res) => {
   try {
     const { id } = req.params;
-  const { name, age, number, email, hobby } = req.body;
+  const { name, age, number, email, hobby, password } = req.body;
 
     // Validate required fields
-    if (!name || !age || !number || !email) {
-      return res.status(400).json({ message: 'All fields are required' });
+    if (!name || !number || !email) {
+      return res.status(400).json({ message: 'Name, phone number, and email are required' });
     }
 
     // Basic email validation
@@ -329,7 +372,7 @@ app.put('/api/form-data/:id', authenticateToken, async (req, res) => {
     // Find and update the record (only if it belongs to the user)
     const formData = await FormData.findOneAndUpdate(
       { _id: id, submittedBy: req.user.userId },
-      { name, age, number, email, hobby },
+      { name, age, number, email, hobby, password },
       { new: true, runValidators: true }
     );
 
