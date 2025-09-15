@@ -462,9 +462,9 @@ function Customize() {
             formHeader: 'Enter the heading',
             submitText: 'Submit',
             formFields: [
-              { name: 'Name', label: 'Name', required: true, type: 'text' },
-              { name: 'Phone Number', label: 'Phone Number', required: true, type: 'text' },
-              { name: 'Email', label: 'Email', required: true, type: 'email' }
+              { name: 'name', label: 'Name', required: true, type: 'text' },
+              { name: 'number', label: 'Phone Number', required: true, type: 'tel' },
+              { name: 'email', label: 'Email', required: true, type: 'email' }
             ],
             excelColumns: customizationData.excelColumns
           });
