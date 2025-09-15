@@ -5,18 +5,18 @@ function Form({ onLogout, user, token }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const formId = searchParams.get('formId');
-  const [formData, setFormData] = useState({ name: '', age: '', number: '', email: '', hobby: '' });
+  const [formData, setFormData] = useState({ name: '', number: '', email: '' });
   const [submittedData, setSubmittedData] = useState([]);
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [editingId, setEditingId] = useState(null);
-  const [editFormData, setEditFormData] = useState({ name: '', age: '', number: '', email: '', hobby: '' });
+  const [editFormData, setEditFormData] = useState({ name: '', number: '', email: '' });
 
-  const [filters, setFilters] = useState({ name: '', age: '', number: '', email: '' });
+  const [filters, setFilters] = useState({ name: '', number: '', email: '' });
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'submittedAt', direction: 'desc' });
-  const [customization, setCustomization] = useState({ formTitle: 'Data Entry Form', formHeader: '', formFields: [] });
+  const [customization, setCustomization] = useState({ formTitle: 'Data Entry Form', formHeader: '', formFields: [], submitText: 'Submit' });
 
   // Load customization (title, header, fields)
   useEffect(() => {
@@ -29,7 +29,8 @@ function Form({ onLogout, user, token }) {
           setCustomization({
             formTitle: parsed.formTitle || 'Data Entry Form',
             formHeader: parsed.formHeader || '',
-            formFields: parsed.formFields
+            formFields: parsed.formFields,
+            submitText: parsed.submitText || 'Submit'
           });
         }
       }
@@ -50,9 +51,10 @@ function Form({ onLogout, user, token }) {
           setCustomization({
             formTitle: data.formTitle || 'Data Entry Form',
             formHeader: data.formHeader || '',
-            formFields: Array.isArray(data.formFields) ? data.formFields : []
+            formFields: Array.isArray(data.formFields) ? data.formFields : [],
+            submitText: data.submitText || 'Submit'
           });
-          try { localStorage.setItem('customization', JSON.stringify({ formTitle: data.formTitle, formHeader: data.formHeader || '', formFields: data.formFields })); } catch (_) {}
+          try { localStorage.setItem('customization', JSON.stringify({ formTitle: data.formTitle, formHeader: data.formHeader || '', formFields: data.formFields, submitText: data.submitText })); } catch (_) {}
         }
       } catch (e) {}
     };
@@ -100,36 +102,37 @@ function Form({ onLogout, user, token }) {
     setIsSubmitting(true);
     setMessage('');
     try {
-      // If any field is configured as date, normalize to server schema
-      const normalized = { ...formData };
-      const ageField = (customization.formFields || []).find(f => f.name === 'age');
-      if (ageField?.type === 'date' && formData.age) {
-        // Convert date to age in years
-        const birth = new Date(formData.age);
-        if (!isNaN(birth)) {
-          const today = new Date();
-          let years = today.getFullYear() - birth.getFullYear();
-          const m = today.getMonth() - birth.getMonth();
-          if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) years--;
-          normalized.age = String(Math.max(0, years));
-        }
+      // Client-side required field guard
+      const requiredMissing = ['name','number','email'].filter(k => !String(formData[k] || '').trim());
+      if (requiredMissing.length) {
+        setMessage(`Please fill required field(s): ${requiredMissing.join(', ')}`);
+        setIsSubmitting(false);
+        return;
       }
+
+      const normalized = { ...formData };
 
       const res = await fetch('/api/submit-form', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ ...normalized, formId })
       });
-      const data = await res.json();
+      let data;
+      try {
+        data = await res.json();
+      } catch (_) {
+        data = null;
+      }
       if (res.ok) {
         setMessage('Form submitted successfully!');
-        setFormData({ name: '', age: '', number: '', email: '', hobby: '' });
+        setFormData({ name: '', number: '', email: '' });
         fetchFormData();
       } else {
-        setMessage(data.message || 'Failed to submit form');
+        const detail = data?.message || data?.error || `HTTP ${res.status}`;
+        setMessage(`Failed to submit form: ${detail}`);
       }
     } catch (e) {
-      setMessage('Network error. Please try again.');
+      setMessage(`Network error. Please try again. ${e?.message || ''}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -162,7 +165,7 @@ function Form({ onLogout, user, token }) {
     console.log('FormData created, sending request...');
 
     try {
-      const res = await fetch('/api/upload-excel', {
+      const res = await fetch(`/api/upload-excel${formId ? `?formId=${encodeURIComponent(formId)}` : ''}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}` },
         body: formData
@@ -172,9 +175,10 @@ function Form({ onLogout, user, token }) {
       console.log('Response headers:', res.headers);
 
       if (!res.ok) {
-        const errorText = await res.text();
+        let errorText;
+        try { errorText = await res.text(); } catch (_) { errorText = ''; }
         console.error('Server error response:', errorText);
-        setMessage(`Server error: ${res.status} - ${errorText}`);
+        setMessage(`Server error: ${res.status} - ${errorText || 'Upload failed'}`);
         return;
       }
 
@@ -201,7 +205,6 @@ function Form({ onLogout, user, token }) {
     setEditingId(item._id);
     setEditFormData({
       name: item.name,
-      age: item.age,
       number: item.number,
       email: item.email
     });
@@ -222,7 +225,7 @@ function Form({ onLogout, user, token }) {
       if (res.ok) {
         setMessage('Record updated successfully!');
         setEditingId(null);
-        setEditFormData({ name: '', age: '', number: '', email: '' });
+        setEditFormData({ name: '', number: '', email: '' });
         fetchFormData();
       } else {
         const data = await res.json();
@@ -235,7 +238,7 @@ function Form({ onLogout, user, token }) {
 
   const handleCancelEdit = () => {
     setEditingId(null);
-    setEditFormData({ name: '', age: '', number: '', email: '' });
+    setEditFormData({ name: '', number: '', email: '' });
   };
 
   const handleDelete = async (id) => {
@@ -287,7 +290,7 @@ function Form({ onLogout, user, token }) {
 
   const handleClearSearch = () => {
     setSearchTerm('');
-    setFilters({ name: '', age: '', number: '', email: '' });
+    setFilters({ name: '', number: '', email: '' });
   };
 
   const handleSort = (key) => {
@@ -310,10 +313,9 @@ function Form({ onLogout, user, token }) {
         normalized(row.email).includes(normalized(f.email));
       
       // Check other filters
-      const ageMatch = !f.age || String(row.age).includes(f.age);
       const numberMatch = !f.number || String(row.number).includes(f.number);
       
-      return searchMatch && ageMatch && numberMatch;
+      return searchMatch && numberMatch;
     });
 
     const { key, direction } = sortConfig;
@@ -323,7 +325,7 @@ function Form({ onLogout, user, token }) {
       if (av == null && bv == null) return 0;
       if (av == null) return direction === 'asc' ? -1 : 1;
       if (bv == null) return direction === 'asc' ? 1 : -1;
-      if (key === 'age' || key === 'number') {
+      if (key === 'number') {
         const na = Number(av), nb = Number(bv);
         return direction === 'asc' ? na - nb : nb - na;
       }
@@ -437,29 +439,26 @@ function Form({ onLogout, user, token }) {
                 <span className="file-info">Supports .xlsx and .xls files</span>
                 {isUploading && <div className="upload-progress">Processing file...</div>}
                 
-                {/* Excel Format Guide */}
+                {/* Excel Format Guide – dynamic based on fields */}
                 <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#f0f9ff', border: '1px solid #bae6fd', borderRadius: '6px' }}>
                   <h4 style={{ margin: '0 0 8px 0', fontSize: '14px', color: '#0369a1' }}>📋 Excel Format Required:</h4>
                   <div style={{ fontSize: '12px', color: '#0c4a6e' }}>
-                    <div>• <strong>Column A:</strong> Name (required)</div>
-                    <div>• <strong>Column B:</strong> Age (required, numbers only)</div>
-                    <div>• <strong>Column C:</strong> Phone Number (required)</div>
-                    <div>• <strong>Column D:</strong> Email (required)</div>
-                    <div>• <strong>Column E:</strong> Hobby (optional)</div>
+                    {(customization.formFields || []).map((f, idx) => (
+                      <div key={f.name}>• <strong>Column {String.fromCharCode(65 + idx)}:</strong> {f.label || f.name} {f.required ? '(required)' : '(optional)'}{f.type === 'number' ? ', numbers only' : ''}</div>
+                    ))}
                   </div>
                   <div style={{ marginTop: '8px', fontSize: '11px', color: '#64748b' }}>
-                    <em>First row should contain column headers (Name, Age, Phone Number, Email)</em>
+                    <em>First row should contain column headers matching your field labels.</em>
                   </div>
                   
                   {/* Sample Data Button */}
                   <button 
                     type="button"
                     onClick={() => {
-                      const sampleData = [
-                        ['Name', 'Age', 'Phone Number', 'Email', 'Hobby'],
-                        ['John Doe', 25, '123-456-7890', 'john@example.com', 'Reading'],
-                        ['Jane Smith', 30, '987-654-3210', 'jane@example.com', 'Football']
-                      ];
+                      const header = (customization.formFields || []).map(f => f.label || f.name);
+                      const row1 = (customization.formFields || []).map(f => f.name === 'number' ? '123-456-7890' : f.name === 'email' ? 'john@example.com' : f.name === 'name' ? 'John Doe' : f.name === 'password' ? '••••••' : '');
+                      const row2 = (customization.formFields || []).map(f => f.name === 'number' ? '987-654-3210' : f.name === 'email' ? 'jane@example.com' : f.name === 'name' ? 'Jane Smith' : f.name === 'password' ? '••••••' : '');
+                      const sampleData = [header, row1, row2];
                       
                       let csvContent = "data:text/csv;charset=utf-8,";
                       sampleData.forEach(row => {
@@ -499,64 +498,52 @@ function Form({ onLogout, user, token }) {
             </div>
           </div>
 
-          <div style={{ flex: '0 0 30%', boxSizing: 'border-box',marginLeft:'0%'}}>
-            <div className="form-header2">
-              <h4 style={{ whiteSpace: 'nowrap', textAlign: 'center' }}>{customization.formHeader || 'Enter your information below and Submit the form .'}</h4>
+          <div style={{ flex: '0 0 30%', boxSizing: 'border-box', marginLeft: '0%' }}>
+            <div className="form-header2" style={{ width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', marginBottom: '12px' }}>
+              <h4
+                style={{
+                  textAlign: 'center',
+                  margin: '0 auto',
+                  fontWeight: 500,
+                  width: '100%',
+                  wordBreak: 'break-word',
+                  whiteSpace: 'pre-line',
+                  color: '#1e293b',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  minHeight: '32px',
+                  padding: 0
+                }}
+              >
+                {customization.formHeader || (
+                  <span style={{ width: '100%', textAlign: 'center', display: 'block' }}>
+                    Enter your information below and Submit the form.
+                  </span>
+                )}
+              </h4>
             </div>
             <form id="created"  onSubmit={handleSubmit} className="data-form surface" style={{ padding: '16px', borderRadius: '12px' }}>
-              <div className="form-row">
-                {(() => {
-                  const nameField = (customization.formFields || []).find(f => f.name === 'name');
-                  const ageField = (customization.formFields || []).find(f => f.name === 'age');
-                  return (
-                    <>
-                      <div className="form-group">
-                        <label htmlFor="name">{nameField?.label || 'Name'}</label>
-                        <input id="name" name="name" type={nameField?.type || 'text'} value={formData.name} onChange={handleChange} required={nameField?.required ?? true} className="input" />
-                      </div>
-                      <div className="form-group">
-                        <label htmlFor="age">{ageField?.label || 'Age'}</label>
-                        <input id="age" name="age" type={ageField?.type || 'number'} value={formData.age} onChange={handleChange} required={ageField?.required ?? true} className="input" />
-                      </div>
-                    </>
-                  );
-                })()}
-            </div>
-              <div className="form-row">
-                {(() => {
-                  const numberField = (customization.formFields || []).find(f => f.name === 'number');
-                  const emailField = (customization.formFields || []).find(f => f.name === 'email');
-                  return (
-                    <>
-                      <div className="form-group">
-                        <label htmlFor="number">{numberField?.label || 'Phone Number'}</label>
-                        <input id="number" name="number" type={numberField?.type || 'tel'} value={formData.number} onChange={handleChange} required={numberField?.required ?? true} className="input" />
-                      </div>
-                      <div className="form-group">
-                        <label htmlFor="email">{emailField?.label || 'Email'}</label>
-                        <input id="email" name="email" type={emailField?.type || 'email'} value={formData.email} onChange={handleChange} required={emailField?.required ?? true} className="input" />
-                      </div>
-                    </>
-                  );
-                })()}
-            </div>
-
-            {(() => {
-              const hobbyField = (customization.formFields || []).find(f => f.name === 'hobby');
-              if (!hobbyField) return null;
-              return (
-                <div className="form-row">
+              {(customization.formFields || []).map((field, idx) => (
+                <div className="form-row" key={field.name || idx}>
                   <div className="form-group" style={{ width: '100%' }}>
-                    <label htmlFor="hobby">{hobbyField.label || 'Hobby'}</label>
-                    <input id="hobby" name="hobby" type={hobbyField.type || 'text'} value={formData.hobby} onChange={handleChange} className="input" placeholder="e.g., Reading, Football" required={hobbyField.required ?? false} />
+                    <label htmlFor={field.name || `field_${idx}`}>{field.label || field.name || `Field ${idx+1}`}</label>
+                    <input
+                      id={field.name || `field_${idx}`}
+                      name={field.name}
+                      type={field.type || 'text'}
+                      value={formData[field.name] || ''}
+                      onChange={handleChange}
+                      required={!!field.required}
+                      className="input"
+                    />
                   </div>
                 </div>
-              );
-            })()}
+              ))}
 
               {message && <div className={`message ${message.includes('success') ? 'success' : 'error'}`}>{message}</div>}
 
-              <button type="submit" className="submit-button btn btn-primary" disabled={isSubmitting}>{isSubmitting ? 'Submitting...' : 'Submit'}</button>
+              <button type="submit" className="submit-button btn btn-primary" disabled={isSubmitting}>{isSubmitting ? 'Submitting...' : (customization.submitText || 'Submit')}</button>
           </form>
           </div>
         </div>
@@ -621,11 +608,11 @@ function Form({ onLogout, user, token }) {
               <table className="data-table">
                 <thead>
                   <tr>
-                    <th onClick={() => handleSort('name')} className="th-sort left">Name <SortIndicator column="name" /></th>
-                    <th onClick={() => handleSort('age')} className="th-sort center">Age <SortIndicator column="age" /></th>
-                    <th onClick={() => handleSort('number')} className="th-sort center">Phone Number <SortIndicator column="number" /></th>
-                    <th onClick={() => handleSort('email')} className="th-sort left">Email <SortIndicator column="email" /></th>
-                    <th className="left">Hobby</th>
+                    {(customization.formFields || []).map((f) => (
+                      <th key={f.name} className={f.name === 'number' ? 'th-sort center' : f.name === 'email' ? 'th-sort left' : 'th-sort left'} onClick={() => handleSort(f.name)}>
+                        {f.label || f.name} <SortIndicator column={f.name} />
+                      </th>
+                    ))}
                     <th onClick={() => handleSort('submittedAt')} className="th-sort right">Submitted At <SortIndicator column="submittedAt" /></th>
                     <th className="th-actions center">Actions</th>
                   </tr>
@@ -633,15 +620,11 @@ function Form({ onLogout, user, token }) {
                 <tbody>
                   {filteredSortedData.map((item) => (
                     <tr key={item._id}>
-                      {false ? (
-                        <></>
-                      ) : (
-                        <>
-                          <td className="left">{item.name}</td>
-                          <td className="center">{item.age}</td>
-                          <td className="center">{item.number}</td>
-                          <td className="left">{item.email}</td>
-                          <td className="left">{item.hobby || '-'}</td>
+                      {(customization.formFields || []).map((f) => (
+                        <td key={f.name} className={f.name === 'number' ? 'center' : f.name === 'email' ? 'left' : 'left'}>
+                          {item[f.name] ?? '-'}
+                        </td>
+                      ))}
                           <td className="right">{formatDate(item.submittedAt)}</td>
                           <td className="center">
                             <div className="action-buttons">
@@ -654,8 +637,6 @@ function Form({ onLogout, user, token }) {
                               </button>
                             </div>
                           </td>
-                        </>
-                      )}
                     </tr>
                   ))}
                 </tbody>

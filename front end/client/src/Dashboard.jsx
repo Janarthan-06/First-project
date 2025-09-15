@@ -38,6 +38,10 @@ function Dashboard({ onLogout, user, token }) {
     navigate('/customize?new=true');
   };
 
+  const handleCreateTemplate = (template) => {
+    navigate(`/customize?new=true&template=${encodeURIComponent(template)}`);
+  };
+
   const handleFormClick = (formId) => {
     navigate(`/form?formId=${formId}`);
   };
@@ -72,13 +76,17 @@ function Dashboard({ onLogout, user, token }) {
   };
 
   return (
-    <div className="dashboard-container">
-      <div className="dashboard-header">
+    <div className="dashboard-container" style={{ display: 'flex', gap: '16px' }}>
+      <div className="dashboard-header" style={{ position: 'relative', paddingRight: '120px' }}>
         <div className="header-content">
           <h1>My Forms Dashboard</h1>
           <p>Welcome back, {user?.username}!</p>
         </div>
-        <button className="logout-button btn btn-outline" onClick={onLogout}>
+        <button 
+          className="logout-button btn btn-outline" 
+          onClick={onLogout}
+          style={{ position: 'fixed', top: 20, right: 20, zIndex: 1000 }}
+        >
           Logout
         </button>
       </div>
@@ -90,7 +98,37 @@ function Dashboard({ onLogout, user, token }) {
         </div>
       )}
 
-      <div className="dashboard-content">
+      {/* Templates sidebar */}
+      <div style={{ flex: '0 0 260px', order: 2 }}>
+        <div className="templates-card" style={{ position: 'sticky', top: 20, background: 'white', borderRadius: '12px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)', padding: '16px' }}>
+          <h3 style={{ marginTop: 0 }}>Templates</h3>
+          <div style={{ display: 'grid', gap: '10px' }}>
+            <button
+              onClick={() => handleCreateTemplate('facebook')}
+              style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', cursor: 'pointer', background: '#f9fafb', textAlign: 'left' }}
+            >
+              📘 Facebook Login
+              <div style={{ fontSize: '12px', color: '#6b7280' }}>Name, Phone, Email, Password</div>
+            </button>
+            <button
+              onClick={() => handleCreateTemplate('instagram')}
+              style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', cursor: 'pointer', background: '#f9fafb', textAlign: 'left' }}
+            >
+              📸 Instagram Login
+              <div style={{ fontSize: '12px', color: '#6b7280' }}>Name, Phone, Email, Password</div>
+            </button>
+            <button
+              onClick={() => handleCreateTemplate('whatsapp')}
+              style={{ padding: '10px 12px', borderRadius: '8px', border: '1px solid #e5e7eb', cursor: 'pointer', background: '#f9fafb', textAlign: 'left' }}
+            >
+              💬 WhatsApp Login
+              <div style={{ fontSize: '12px', color: '#6b7280' }}>Name, Phone, Email, Password</div>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="dashboard-content" style={{ flex: 1, order: 1 }}>
         <div className="forms-grid">
           {/* New Form Card */}
           <div className="form-card new-form-card" onClick={handleCreateNew}>
