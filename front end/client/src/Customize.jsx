@@ -14,17 +14,13 @@ function Customize({ onLogout, user, token }) {
     submitText: 'Submit',
     formFields: [
       { name: 'name', label: 'Name', required: true, type: 'text' },
-      { name: 'age', label: 'Age', required: true, type: 'number' },
       { name: 'number', label: 'Phone Number', required: true, type: 'tel' },
-      { name: 'email', label: 'Email', required: true, type: 'email' },
-      { name: 'hobby', label: 'Hobby', required: false, type: 'text' }
+      { name: 'email', label: 'Email', required: true, type: 'email' }
     ],
     excelColumns: [
       { name: 'name', label: 'Name', required: true },
-      { name: 'age', label: 'Age', required: true },
       { name: 'number', label: 'Phone Number', required: true },
-      { name: 'email', label: 'Email', required: true },
-      { name: 'hobby', label: 'Hobby', required: false }
+      { name: 'email', label: 'Email', required: true }
     ]
   });
 
@@ -42,34 +38,37 @@ function Customize({ onLogout, user, token }) {
     submitText: 'Submit',
     formFields: [
       { name: 'name', label: 'Name', required: true, type: 'text' },
-      { name: 'age', label: 'Age', required: true, type: 'number' },
       { name: 'number', label: 'Phone Number', required: true, type: 'tel' },
-      { name: 'email', label: 'Email', required: true, type: 'email' },
-      { name: 'hobby', label: 'Hobby', required: false, type: 'text' }
+      { name: 'email', label: 'Email', required: true, type: 'email' }
     ],
     excelColumns: [
       { name: 'name', label: 'Name', required: true },
-      { name: 'age', label: 'Age', required: true },
       { name: 'number', label: 'Phone Number', required: true },
-      { name: 'email', label: 'Email', required: true },
-      { name: 'hobby', label: 'Hobby', required: false }
+      { name: 'email', label: 'Email', required: true }
     ]
   });
 
   const ensureStaticFields = (data) => {
-    // Ensure phone and email exist and are locked as required with proper types
+    // Ensure name, phone and email exist and are locked (name/type/required), but keep any custom labels
     let fields = [...(data.formFields || [])];
     const ensureField = (arr, name, fallback) => {
       const idx = arr.findIndex(f => f.name === name);
       if (idx === -1) {
         return [...arr, fallback];
       }
-      const f = arr[idx];
-      const locked = name === 'number' ? { name: 'number', label: 'Phone Number', required: true, type: 'tel' }
-        : { name: 'email', label: 'Email', required: true, type: 'email' };
+      const current = arr[idx] || {};
+      let locked;
+      if (name === 'name') {
+        locked = { name: 'name', label: current.label || 'Name', required: true, type: 'text' };
+      } else if (name === 'number') {
+        locked = { name: 'number', label: current.label || 'Phone Number', required: true, type: 'tel' };
+      } else if (name === 'email') {
+        locked = { name: 'email', label: current.label || 'Email', required: true, type: 'email' };
+      }
       arr[idx] = { ...locked };
       return arr;
     };
+    fields = ensureField(fields, 'name', { name: 'name', label: 'Name', required: true, type: 'text' });
     fields = ensureField(fields, 'number', { name: 'number', label: 'Phone Number', required: true, type: 'tel' });
     fields = ensureField(fields, 'email', { name: 'email', label: 'Email', required: true, type: 'email' });
 
@@ -78,9 +77,10 @@ function Customize({ onLogout, user, token }) {
       const idx = arr.findIndex(c => c.name === name);
       if (idx === -1) return [...arr, fallback];
       const c = arr[idx];
-      arr[idx] = { ...c, name, label: fallback.label, required: true };
+      arr[idx] = { ...c, name, label: c.label || fallback.label, required: true };
       return arr;
     };
+    excelColumns = ensureCol(excelColumns, 'name', { name: 'name', label: 'Name', required: true });
     excelColumns = ensureCol(excelColumns, 'number', { name: 'number', label: 'Phone Number', required: true });
     excelColumns = ensureCol(excelColumns, 'email', { name: 'email', label: 'Email', required: true });
 
@@ -89,9 +89,12 @@ function Customize({ onLogout, user, token }) {
 
   const [message, setMessage] = useState('');
   const [isSaving, setIsSaving] = useState(false);
+  const [isNarrow, setIsNarrow] = useState(typeof window !== 'undefined' ? window.innerWidth < 1000 : false);
 
   // Load saved customization on mount
   useEffect(() => {
+    const onResize = () => setIsNarrow(window.innerWidth < 1000);
+    try { window.addEventListener('resize', onResize); } catch (_) {}
     const load = async () => {
       try {
         let endpoint = '/api/customization';
@@ -130,32 +133,31 @@ function Customize({ onLogout, user, token }) {
       }
     };
     load();
-  }, [token]);
+    return () => {
+      try { window.removeEventListener('resize', onResize); } catch (_) {}
+    };
+  }, [token, formId, isNewForm]);
 
   const handleFieldChange = (index, field, value) => {
     const target = customizationData.formFields[index];
     if (!target) return;
-    if (target.name === 'number' || target.name === 'email') {
+    if (target.name === 'number' || target.name === 'email' || target.name === 'name') {
       // Disallow any changes to static fields
       return;
     }
     savePrev();
     const newFields = [...customizationData.formFields];
     newFields[index] = { ...newFields[index], [field]: value };
+    
+    // Auto-sync field name with label for non-static fields
+    if (field === 'label' && value) {
+      const sanitizedLabel = value.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      newFields[index] = { ...newFields[index], name: sanitizedLabel };
+    }
+    
     setCustomizationData(ensureStaticFields({ ...customizationData, formFields: newFields }));
   };
 
-  const handleColumnChange = (index, field, value) => {
-    const col = customizationData.excelColumns[index];
-    if (!col) return;
-    if (col.name === 'number' || col.name === 'email') {
-      return;
-    }
-    savePrev();
-    const newColumns = [...customizationData.excelColumns];
-    newColumns[index] = { ...newColumns[index], [field]: value };
-    setCustomizationData(ensureStaticFields({ ...customizationData, excelColumns: newColumns }));
-  };
 
   const addField = () => {
     const existingCount = (customizationData.formFields || []).length + 1;
@@ -172,28 +174,30 @@ function Customize({ onLogout, user, token }) {
   const removeField = (index) => {
     const target = customizationData.formFields[index];
     if (!target) return;
-    if (target.name === 'number' || target.name === 'email') return; // lock static fields
+    if (target.name === 'number' || target.name === 'email' || target.name === 'name') return; // lock static fields
     savePrev();
     const newFields = customizationData.formFields.filter((_, i) => i !== index);
     setCustomizationData(ensureStaticFields({ ...customizationData, formFields: newFields }));
   };
 
-  const addColumn = () => {
-    const newColumn = { name: '', label: '', required: false };
-    savePrev();
-    setCustomizationData(ensureStaticFields({
-      ...customizationData,
-      excelColumns: [...customizationData.excelColumns, newColumn]
-    }));
-  };
 
-  const removeColumn = (index) => {
-    const target = customizationData.excelColumns[index];
-    if (!target) return;
-    if (target.name === 'number' || target.name === 'email') return;
+
+  // Template: User Registration (Name, Phone, Email, Password)
+  const applyUserRegistrationTemplate = () => {
     savePrev();
-    const newColumns = customizationData.excelColumns.filter((_, i) => i !== index);
-    setCustomizationData(ensureStaticFields({ ...customizationData, excelColumns: newColumns }));
+    const fields = [
+      { name: 'name', label: 'Name', required: true, type: 'text' },
+      { name: 'number', label: 'Phone Number', required: true, type: 'tel' },
+      { name: 'email', label: 'Email', required: true, type: 'email' },
+      { name: 'password', label: 'Password', required: true, type: 'password' }
+    ];
+    const excelColumns = [
+      { name: 'name', label: 'Name', required: true },
+      { name: 'number', label: 'Phone Number', required: true },
+      { name: 'email', label: 'Email', required: true },
+      { name: 'password', label: 'Password', required: true }
+    ];
+    setCustomizationData(ensureStaticFields({ ...customizationData, formFields: fields, excelColumns }));
   };
 
   const handleUndo = () => {
@@ -241,7 +245,7 @@ function Customize({ onLogout, user, token }) {
 
     // Validate fields: no empty name/label
     const invalidIndexes = (customizationData.formFields || []).reduce((acc, f, idx) => {
-      const isStatic = f.name === 'number' || f.name === 'email';
+      const isStatic = f.name === 'number' || f.name === 'email' || f.name === 'name';
       if (isStatic) return acc;
       if (!String(f.name || '').trim() || !String(f.label || '').trim()) acc.push(idx + 1);
       return acc;
@@ -365,7 +369,7 @@ function Customize({ onLogout, user, token }) {
         </div>
       )}
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: isNarrow ? '1fr' : '1fr 1fr', gap: '20px' }}>
         {/* Form Customization */}
         <div style={{
           backgroundColor: 'white',
@@ -476,7 +480,7 @@ function Customize({ onLogout, user, token }) {
                       borderRadius: '4px',
                       fontSize: '12px'
                     }}
-                    disabled={field.name === 'number' || field.name === 'email'}
+                    disabled={field.name === 'number' || field.name === 'email' || field.name === 'name'}
                   />
                 </div>
                 
@@ -495,7 +499,7 @@ function Customize({ onLogout, user, token }) {
                       borderRadius: '4px',
                       fontSize: '12px'
                     }}
-                    disabled={field.name === 'number' || field.name === 'email'}
+                    disabled={field.name === 'number' || field.name === 'email' || field.name === 'name'}
                   />
                 </div>
                 
@@ -513,7 +517,7 @@ function Customize({ onLogout, user, token }) {
                       borderRadius: '4px',
                       fontSize: '12px'
                     }}
-                    disabled={field.name === 'number' || field.name === 'email'}
+                    disabled={field.name === 'number' || field.name === 'email' || field.name === 'name'}
                   >
                     <option value="text">Text</option>
                     <option value="email">Email</option>
@@ -528,7 +532,7 @@ function Customize({ onLogout, user, token }) {
                     type="checkbox"
                     checked={field.required}
                     onChange={(e) => handleFieldChange(index, 'required', e.target.checked)}
-                    disabled={field.name === 'number' || field.name === 'email'}
+                    disabled={field.name === 'number' || field.name === 'email' || field.name === 'name'}
                     style={{ marginRight: '8px' }}
                   />
                   <label style={{ fontSize: '12px' }}>Required</label>
@@ -570,8 +574,24 @@ function Customize({ onLogout, user, token }) {
           >
             + Add Field
           </button>
+          <button
+            type="button"
+            onClick={applyUserRegistrationTemplate}
+            style={{
+              marginLeft: '8px',
+              padding: '8px 16px',
+              backgroundColor: '#2563eb',
+              color: 'white',
+              border: 'none',
+              borderRadius: '6px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            Apply User Registration Template
+          </button>
           <div style={{ marginTop: '8px', color: '#6b7280', fontSize: '12px' }}>
-            Note: Phone Number and Email are required and cannot be edited or removed.
+            Note: Name, Phone Number, and Email are required and cannot be edited or removed.
           </div>
         </div>
 
@@ -610,7 +630,7 @@ function Customize({ onLogout, user, token }) {
                 {/* Right box (actual form preview) */}
                 <div style={{ flex: '0 0 30%', boxSizing: 'border-box', marginLeft: '0%' }}>
                   <div className="form-header2">
-                    <h4 style={{ whiteSpace: 'nowrap', marginLeft:'30px', textAlign: 'center' }}>{customizationData.formHeader || 'Enter your information below and Submit the form .'}</h4>
+                    <h4 style={{ whiteSpace: 'nowrap', marginLeft:'30px', textAlign: 'center' }}>{customizationData.formHeader || 'Enter the detail'}</h4>
                   </div>
                   <form className="data-form surface" style={{ padding: '16px', borderRadius: '12px', marginLeft:'130px'}} onSubmit={(e) => e.preventDefault()}>
                     {/* Dynamic preview: renders exactly the configured fields */}

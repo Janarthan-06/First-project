@@ -1,22 +1,34 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
 function Form({ onLogout, user, token }) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const formId = searchParams.get('formId');
-  const [formData, setFormData] = useState({ name: '', number: '', email: '' });
+  const [formData, setFormData] = useState({});
   const [submittedData, setSubmittedData] = useState([]);
   const [message, setMessage] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
-  const [editingId, setEditingId] = useState(null);
-  const [editFormData, setEditFormData] = useState({ name: '', number: '', email: '' });
 
-  const [filters, setFilters] = useState({ name: '', number: '', email: '' });
+  const [filters, setFilters] = useState({});
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState({ key: 'submittedAt', direction: 'desc' });
   const [customization, setCustomization] = useState({ formTitle: 'Data Entry Form', formHeader: '', formFields: [], submitText: 'Submit' });
+
+  // Initialize form data when customization changes
+  useEffect(() => {
+    if (customization.formFields && customization.formFields.length > 0) {
+      const initialFormData = {};
+      const initialFilters = {};
+      customization.formFields.forEach(field => {
+        initialFormData[field.name] = '';
+        initialFilters[field.name] = '';
+      });
+      setFormData(initialFormData);
+      setFilters(initialFilters);
+    }
+  }, [customization.formFields]);
 
   // Load customization (title, header, fields)
   useEffect(() => {
@@ -61,7 +73,7 @@ function Form({ onLogout, user, token }) {
     loadCustomization();
   }, [token, formId]);
 
-  const fetchFormData = async () => {
+  const fetchFormData = useCallback(async () => {
     try {
       let url = '/api/form-data';
       if (formId) {
@@ -76,7 +88,7 @@ function Form({ onLogout, user, token }) {
         setSubmittedData(data);
       }
     } catch (e) {}
-  };
+  }, [token, formId]);
 
   useEffect(() => { 
     fetchFormData(); 
@@ -93,7 +105,7 @@ function Form({ onLogout, user, token }) {
     }).catch(err => {
       console.log('Server connection: Failed', err);
     });
-  }, []);
+  }, [token, formId, fetchFormData]);
 
   const handleChange = (e) => setFormData({ ...formData, [e.target.name]: e.target.value });
 
@@ -103,9 +115,14 @@ function Form({ onLogout, user, token }) {
     setMessage('');
     try {
       // Client-side required field guard
-      const requiredMissing = ['name','number','email'].filter(k => !String(formData[k] || '').trim());
+      const requiredFields = (customization.formFields || []).filter(f => f.required).map(f => f.name);
+      const requiredMissing = requiredFields.filter(k => !String(formData[k] || '').trim());
       if (requiredMissing.length) {
-        setMessage(`Please fill required field(s): ${requiredMissing.join(', ')}`);
+        const missingLabels = requiredMissing.map(name => {
+          const field = customization.formFields.find(f => f.name === name);
+          return field ? field.label : name;
+        });
+        setMessage(`Please fill required field(s): ${missingLabels.join(', ')}`);
         setIsSubmitting(false);
         return;
       }
@@ -125,7 +142,12 @@ function Form({ onLogout, user, token }) {
       }
       if (res.ok) {
         setMessage('Form submitted successfully!');
-        setFormData({ name: '', number: '', email: '' });
+        // Reset form data to empty values for all fields
+        const resetFormData = {};
+        customization.formFields.forEach(field => {
+          resetFormData[field.name] = '';
+        });
+        setFormData(resetFormData);
         fetchFormData();
       } else {
         const detail = data?.message || data?.error || `HTTP ${res.status}`;
@@ -201,45 +223,7 @@ function Form({ onLogout, user, token }) {
     }
   };
 
-  const handleEdit = (item) => {
-    setEditingId(item._id);
-    setEditFormData({
-      name: item.name,
-      number: item.number,
-      email: item.email
-    });
-  };
-
-  const handleEditChange = (e) => {
-    setEditFormData({ ...editFormData, [e.target.name]: e.target.value });
-  };
-
-  const handleEditSubmit = async (id) => {
-    try {
-      const res = await fetch(`/api/form-data/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify(editFormData)
-      });
-
-      if (res.ok) {
-        setMessage('Record updated successfully!');
-        setEditingId(null);
-        setEditFormData({ name: '', number: '', email: '' });
-        fetchFormData();
-      } else {
-        const data = await res.json();
-        setMessage(data.message || 'Failed to update record');
-      }
-    } catch (e) {
-      setMessage('Network error. Please try again.');
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditingId(null);
-    setEditFormData({ name: '', number: '', email: '' });
-  };
+  // Edit-related handlers removed (not used in UI)
 
   const handleDelete = async (id) => {
     if (!window.confirm('Are you sure you want to delete this record?')) return;
@@ -264,17 +248,18 @@ function Form({ onLogout, user, token }) {
 
   const formatDate = (d) => new Date(d).toLocaleDateString();
 
-  const handleFilterChange = (e) => {
-    const { name, value } = e.target;
-    setFilters((prev) => ({ ...prev, [name]: value }));
-  };
+  // Unused filter change handler removed
 
   const handleSearch = () => {
-    // Search in both name and email fields
+    // Search in all text fields
+    const textFields = (customization.formFields || []).filter(f => f.type === 'text' || f.type === 'email' || !f.type);
+    const searchFilters = {};
+    textFields.forEach(field => {
+      searchFilters[field.name] = searchTerm;
+    });
     setFilters(prev => ({
       ...prev,
-      name: searchTerm,
-      email: searchTerm
+      ...searchFilters
     }));
   };
 
@@ -290,7 +275,11 @@ function Form({ onLogout, user, token }) {
 
   const handleClearSearch = () => {
     setSearchTerm('');
-    setFilters({ name: '', number: '', email: '' });
+    const emptyFilters = {};
+    customization.formFields.forEach(field => {
+      emptyFilters[field.name] = '';
+    });
+    setFilters(emptyFilters);
   };
 
   const handleSort = (key) => {
@@ -307,15 +296,23 @@ function Form({ onLogout, user, token }) {
     const f = filters;
     const normalized = (v) => String(v || '').toLowerCase();
     let data = submittedData.filter((row) => {
-      // Check if search term matches name or email
-      const searchMatch = !f.name || 
-        normalized(row.name).includes(normalized(f.name)) ||
-        normalized(row.email).includes(normalized(f.email));
+      // Check if any field matches the search term
+      const searchMatch = !searchTerm || 
+        (customization.formFields || []).some(field => {
+          const textFields = ['text', 'email'];
+          if (textFields.includes(field.type) || !field.type) {
+            return normalized(row[field.name]).includes(normalized(searchTerm));
+          }
+          return false;
+        });
       
-      // Check other filters
-      const numberMatch = !f.number || String(row.number).includes(f.number);
+      // Check individual field filters
+      const fieldMatches = (customization.formFields || []).every(field => {
+        if (!f[field.name]) return true;
+        return normalized(row[field.name]).includes(normalized(f[field.name]));
+      });
       
-      return searchMatch && numberMatch;
+      return searchMatch && fieldMatches;
     });
 
     const { key, direction } = sortConfig;
@@ -325,7 +322,9 @@ function Form({ onLogout, user, token }) {
       if (av == null && bv == null) return 0;
       if (av == null) return direction === 'asc' ? -1 : 1;
       if (bv == null) return direction === 'asc' ? 1 : -1;
-      if (key === 'number') {
+      // Check if this is a number field
+      const field = customization.formFields.find(f => f.name === key);
+      if (field && (field.type === 'number' || field.type === 'tel')) {
         const na = Number(av), nb = Number(bv);
         return direction === 'asc' ? na - nb : nb - na;
       }
@@ -342,7 +341,7 @@ function Form({ onLogout, user, token }) {
     });
 
     return data;
-  }, [submittedData, filters, sortConfig]);
+  }, [submittedData, filters, sortConfig, customization.formFields, searchTerm]);
 
   const SortIndicator = ({ column }) => {
     if (sortConfig.key !== column) return <span className="sort-indicator">⇅</span>;
@@ -518,7 +517,7 @@ function Form({ onLogout, user, token }) {
               >
                 {customization.formHeader || (
                   <span style={{ width: '100%', textAlign: 'center', display: 'block' }}>
-                    Enter your information below and Submit the form.
+                    Enter the detail
                   </span>
                 )}
               </h4>
@@ -556,7 +555,7 @@ function Form({ onLogout, user, token }) {
                 <input 
                   className="filter-input" 
                   type="text"
-                  placeholder="Search by name or email..." 
+                  placeholder="Search in form fields..." 
                   value={searchTerm} 
                   onChange={handleSearchInputChange}
                   onKeyPress={handleSearchKeyPress}
